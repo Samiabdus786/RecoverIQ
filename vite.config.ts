@@ -1,5 +1,7 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
+import { nitro } from "nitro/vite";
+import tailwindcss from "@tailwindcss/vite";
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -13,8 +15,11 @@ export default defineConfig(() => {
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),
     },
+
     plugins: [
+      tailwindcss(),
       vinext(),
+      nitro(),
     ],
   };
 });
