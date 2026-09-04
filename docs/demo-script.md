@@ -1,31 +1,60 @@
-# Five-minute demo script
+# Five-Minute Demo Script
 
-## 0:00–0:30 — The leakage
+## 0:00-0:30 - The Leakage
 
-Begin on the payment-themed login screen. “A failed payment is not automatically lost revenue—but treating every failure the same wastes contacts, harms trust, and misses the cases most likely to pay. RecoverIQ turns failed payments into a bounded, measurable recovery workflow.” Click **Explore the judge demo**. The rupee transition reads its value from the current eight-case synthetic portfolio rather than showing a fixed claim; point to the simulation labels so the judge knows the data and money are synthetic.
+Begin on the payment-themed login screen:
 
-## 0:30–1:00 — Command center
+"A failed payment is not automatically lost revenue, but treating every failure the same wastes contacts, harms trust, and misses the cases most likely to pay. RecoverIQ turns failed payments into a bounded, measurable recovery workflow."
 
-Open **Command center**. Lead with **Revenue at Risk** and **Revenue Recovered**. Explain: “Every number is calculated from the current application state. Nothing on this screen claims production merchant revenue.” Point to “AI recommends. Rules authorize.”
+Click **Explore the judge demo**. The sign-in transition reads its value from the current eight-case synthetic portfolio. Point to the simulation labels so the reviewer knows the data and money are synthetic.
 
-## 1:00–2:00 — Run recovery
+## 0:30-1:00 - Command Center
 
-Click **Seed demo**, then **Run recovery**. Explain the live sequence: load history → XGBoost probability → diagnosis → expected recovery value → guardrail → one provider action. Show high, medium, and suppressed cases. Call out that RecoverIQ deliberately chooses `DO_NOTHING` for unsafe/uneconomic cases.
+Open **Command center**. Lead with **Revenue at Risk**, **Revenue Recovered**, **Recovery Rate**, and **Net Recovered Revenue**.
 
-## 2:00–3:00 — Explain one decision
+Say: "Every number is calculated from the current application state. Nothing on this screen claims production merchant revenue."
 
-Open Aarav Mehta. Show 91% recovery probability, 12/13 historical successes, bank timeout diagnosis, ₹7,659 expected value, payment-link recommendation, and deterministic approval. Do not describe hidden chain-of-thought; use the displayed reason summary.
+Point to the operating principle: **AI recommends. Rules authorize.**
 
-Open Mira Shah. The recommended action is economically attractive, but ₹48,000 crosses the ₹25,000 rule. Click **Approve action**. Explain that the LLM cannot bypass this pause.
+## 1:00-2:00 - Run Recovery
 
-## 3:00–3:45 — Prove recovery
+Click **Seed demo**, then **Run recovery**. Explain the sequence:
 
-On a monitoring case click **Simulate success**. Return to the command center. Show **Revenue Recovered** and **Net Recovered Revenue** increasing. Re-open the case: state is `RECOVERED`; the stopping rule blocks future action.
+```text
+load history -> XGBoost probability -> Gemini/deterministic diagnosis -> expected value -> guardrail -> one provider action
+```
 
-## 3:45–4:20 — Fail safely
+Show high-priority, medium-priority, and suppressed cases. Call out that RecoverIQ deliberately chooses `DO_NOTHING` for unsafe or uneconomic cases.
 
-Open **Settings** and show the merchant-controlled approval threshold, attempt ceiling, and alert channels. Move the threshold and point to **Live policy impact**; save it, reset the dataset, and run the pipeline to prove the updated engine policy changes which cases pause for human review. Then trigger **Test duplicate webhook**. Explain that the stable event ID produces `0 duplicate actions`. Provider-failure behavior can also be shown from a case detail.
+## 2:00-3:00 - Explain One Decision
 
-## 4:20–5:00 — Evidence and close
+Open a high-confidence recovery case. Show:
 
-Open **Audit trail**. Show ML score, AI recommendation, guardrail decision, provider result, webhook, and stop event. Open Analytics for baseline-vs-selective intervention. Close: “RecoverIQ does not just generate advice. It detects, predicts, decides, guards, executes, monitors, stops, and measures—with Razorpay at the action and outcome boundary.”
+- recovery probability;
+- historical payment context;
+- diagnosis and reason summary;
+- expected recovery value;
+- recommended action;
+- deterministic guardrail decision.
+
+Open the high-value INR 48,000 case. The recommendation may be economically attractive, but the configurable INR 25,000 rule requires human approval. Click **Approve action** and explain that Gemini cannot bypass this pause.
+
+## 3:00-3:45 - Prove Recovery
+
+On a monitoring case, click **Simulate success**. Return to the command center and show **Revenue Recovered** and **Net Recovered Revenue** increasing.
+
+Re-open the case. Its state is `RECOVERED`; the stopping rule blocks future action.
+
+## 3:45-4:20 - Fail Safely
+
+Open **Settings** and show the merchant-controlled approval threshold, attempt ceiling, and alert channels. Move the threshold and point to **Live policy impact**.
+
+Trigger **Test duplicate webhook**. Explain that the stable event ID produces zero duplicate actions. Provider-failure behavior can also be shown from a case detail.
+
+## 4:20-5:00 - Evidence And Close
+
+Open **Audit trail**. Show ML score, AI recommendation, guardrail decision, provider result, webhook, and stop event. Open **Analytics** for baseline-versus-selective intervention.
+
+Close with:
+
+"RecoverIQ does not just generate advice. It detects, predicts, decides, guards, executes, monitors, stops, and measures, with Razorpay at the action and outcome boundary."

@@ -1,29 +1,33 @@
-# Authentication modes
+# Authentication Modes
 
-## Credential-free demo mode
+## Judge Demo Access
 
-RecoverIQ intentionally runs before any API keys are added. The login page supports:
+RecoverIQ intentionally runs before any API keys are added. The login page supports an explicit **Explore the judge demo** path that creates a local demo session for a single synthetic merchant workspace.
 
-- email/password demo sign-in with prefilled non-secret demo credentials;
-- judge demo access, which creates a clearly labeled local demo session;
-- new-user workspace form;
-- password-reset confirmation state;
-- remembered browser session and explicit sign-out.
+The email/password, new-workspace, and reset-password screens are demo-session flows. They are useful for the review experience, but they are not production password authentication, account provisioning, or email delivery.
 
-Demo sessions contain only name, demo email, company, and login method in browser storage. Passwords are never stored. This is appropriate for the five-minute buildathon demonstration, not production identity.
+Demo sessions store only name, email, company, and login method in browser storage. Passwords are not persisted.
 
-## Real Google sign-in
+## Google OAuth
 
-Set `NEXT_PUBLIC_GOOGLE_CLIENT_ID` after creating a Google OAuth web client. The `Continue with Google` button loads Google Identity Services, requests a Google access token, and posts it to `/api/auth/google`. That server route verifies the token with Google userinfo before the browser session is accepted.
+Set `NEXT_PUBLIC_GOOGLE_CLIENT_ID` after creating a Google OAuth web client. The **Continue with Google** button loads Google Identity Services, requests a Google access token, and posts it to `/api/auth/google`. That server route verifies the token with Google's `userinfo` endpoint before the browser session is accepted.
 
-For local development, add `http://localhost:5173` as an authorized JavaScript origin in Google Cloud Console. For deployment, add the production HTTPS origin too.
+For local development, add `http://localhost:5173` as an authorized JavaScript origin in Google Cloud Console. For Vercel, add the deployed HTTPS origin.
 
-Recommended production flow:
+The current Google OAuth implementation returns a browser session containing:
 
-1. Google authorization is validated by a server-side auth layer.
-2. Backend creates an HTTP-only, Secure, SameSite session.
-3. Merchant membership is resolved server-side.
-4. Every FastAPI query filters by authenticated `merchant_id`.
-5. Demo controls are disabled when `DEMO_MODE=false`.
+- verified Google email;
+- display name;
+- company inferred from hosted domain or email domain;
+- login method `google`.
 
-Never expose `RAZORPAY_KEY_SECRET`, webhook secrets, Gemini keys, database passwords, or service-role keys in the frontend.
+## Production Boundary
+
+Before using real merchant data, add production tenant authorization:
+
+1. Create an HTTP-only, Secure, SameSite backend session after Google verification.
+2. Resolve merchant membership server-side.
+3. Filter every FastAPI query by authenticated `merchant_id`.
+4. Disable or protect demo controls when `DEMO_MODE=false`.
+
+Never expose `RAZORPAY_KEY_SECRET`, webhook secrets, Gemini keys, database passwords, service-role keys, or Google client secrets in frontend variables.
