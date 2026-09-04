@@ -136,6 +136,10 @@ const money = (value: number) =>
 const shortMoney = (value: number) =>
   value >= 100000 ? `₹${(value / 100000).toFixed(2)}L` : money(value);
 
+const API_BASE =
+  import.meta.env.VITE_API_URL ||
+  "https://recoveriq-gwz8.onrender.com/api";
+
 function Badge({
   children,
   tone = "slate",
@@ -271,28 +275,177 @@ export default function RecoverIQApp({
     setData(null);
     setSelected(null);
   }
-  async function action(type: string, id?: string) {
-    setWorking(type + (id || ""));
-    setError("");
-    try {
-      const response = await fetch("/api/demo/action", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type, id }),
-      });
-      if (!response.ok) throw new Error("Action failed");
-      const next = await response.json();
-      setData(next);
-      if (selected)
-        setSelected(next.cases.find((c: Case) => c.id === selected.id) || null);
-    } catch {
-      setError(
-        "The demo action could not be completed. Try Seed Demo to reset.",
+ async function action(type: string, id?: string) {
+  setWorking(type + (id || ""));
+  setError("");
+
+  try {
+    // ==========================================
+    // REAL RAZORPAY EXECUTION
+    // ==========================================
+    if (type === "execute" && id) {
+      // 1. Get real recovery cases from Render
+      const casesResponse = await fetch(`${API_BASE}/recovery/cases`);
+
+      if (!casesResponse.ok) {
+        throw new Error("Could not load real recovery cases");
+      }
+
+      const casesJson = await casesResponse.json();
+
+      const realCases = Array.isArray(casesJson)
+        ? casesJson
+        : casesJson.cases || [];
+
+      // Frontend demo id = pay_demo_001
+      // Backend external_id = pay_demo_001
+      const realCase = realCases.find(
+        (c: any) => c.external_id === id,
       );
-    } finally {
-      setWorking("");
+
+      if (!realCase) {
+        throw new Error(`Backend recovery case not found for ${id}`);
+      }
+
+      // 2. Execute the real recovery action
+      const executeResponse = await fetch(
+        `${API_BASE}/recovery/${realCase.id}/execute`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+
+      if (!executeResponse.ok) {
+        const message = await executeResponse.text();
+        throw new Error(message || "Recovery execution failed");
+      }
+
+      const executeResult = await executeResponse.json();
+
+      console.log("Real recovery execution:", executeResult);
+
+      // 3. Fetch latest backend case after execution
+      const latestResponse = await fetch(
+        `${API_BASE}/recovery/${realCase.id}`,
+      );
+
+      let latestCase: any = {};
+
+      if (latestResponse.ok) {
+        latestCase = await latestResponse.json();
+      }
+
+      console.log("Latest backend case:", latestCase);
+
+      // 4. Find Razorpay URL
+      const paymentUrl =
+        executeResult.payment_link_url ||
+        executeResult.paymentLinkUrl ||
+        executeResult.short_url ||
+        executeResult.payment_url ||
+        executeResult.provider_url ||
+        executeResult.url ||
+        latestCase.payment_link_url ||
+        latestCase.paymentLinkUrl ||
+        latestCase.short_url ||
+        latestCase.payment_url ||
+        latestCase.provider_url ||
+        latestCase.url;
+
+      if (!paymentUrl) {
+        throw new Error(
+          "Razorpay payment link was created but no payment URL was returned.",
+        );
+      }
+
+      // 5. Update current frontend case
+      setData((current) => {
+        if (!current) return current;
+
+        return {
+          ...current,
+          provider: "RAZORPAY TEST MODE",
+          cases: current.cases.map((c) =>
+            c.id === id
+              ? {
+                  ...c,
+                  state: "MONITORING",
+                  paymentLinkUrl: paymentUrl,
+                  providerRef:
+                    latestCase.provider_ref ||
+                    latestCase.providerRef ||
+                    executeResult.provider_ref ||
+                    executeResult.providerRef ||
+                    c.providerRef,
+                  operationStatus:
+                    "Razorpay Test payment link created successfully.",
+                }
+              : c,
+          ),
+        };
+      });
+
+      // Update currently opened dialog
+      setSelected((current) =>
+        current?.id === id
+          ? {
+              ...current,
+              state: "MONITORING",
+              paymentLinkUrl: paymentUrl,
+              operationStatus:
+                "Razorpay Test payment link created successfully.",
+            }
+          : current,
+      );
+
+      // 6. Open Razorpay
+      window.open(
+        paymentUrl,
+        "_blank",
+        "noopener,noreferrer",
+      );
+
+      return;
     }
+
+    // ==========================================
+    // EXISTING DEMO ACTIONS
+    // seed / run / approve / reject / etc.
+    // ==========================================
+    const response = await fetch("/api/demo/action", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type, id }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Action failed");
+    }
+
+    const next = await response.json();
+
+    setData(next);
+
+    if (selected) {
+      setSelected(
+        next.cases.find((c: Case) => c.id === selected.id) || null,
+      );
+    }
+  } catch (err) {
+    console.error("RecoverIQ action error:", err);
+
+    setError(
+      err instanceof Error
+        ? err.message
+        : "The recovery action could not be completed.",
+    );
+  } finally {
+    setWorking("");
   }
+}
   if (session === undefined) return <Loading />;
   if (!session) return <AuthScreen onAuthenticated={authenticate} />;
   if (showEntry)
