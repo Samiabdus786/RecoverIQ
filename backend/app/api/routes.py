@@ -34,6 +34,7 @@ def case_json(case: RecoveryCase) -> dict:
         "priority": case.priority, "recommended_action": case.recommended_action,
         "guardrail_decision": case.guardrail_decision, "state": case.state,
         "attempts": case.recovery_attempts, "contacts": case.customer_contacts,
+        "payment_link_id": case.payment_link_id,
         "payment_link_url": case.payment_link_url, "occurred_at": p.occurred_at.isoformat(),
         "history": {"successes": c.previous_success_count, "failures": c.previous_failure_count,
                     "recoveries": c.previous_recovery_count, "age_days": c.age_days},
