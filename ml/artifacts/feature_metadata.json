@@ -1,0 +1,22 @@
+{
+  "numeric": [
+    "transaction_amount",
+    "customer_age_days",
+    "number_previous_transactions",
+    "previous_success_count",
+    "previous_failure_count",
+    "historical_success_rate",
+    "attempt_number",
+    "hours_since_failure",
+    "hour_of_day",
+    "day_of_week",
+    "previous_recovery_count"
+  ],
+  "categorical": [
+    "payment_method",
+    "failure_reason",
+    "customer_value_segment",
+    "subscription_status"
+  ],
+  "target": "recovered"
+}

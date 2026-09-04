@@ -1,0 +1,27 @@
+{
+  "dataset_rows": 10000,
+  "seed": 42,
+  "split": {
+    "train": 7000,
+    "validation": 1500,
+    "test": 1500
+  },
+  "threshold": 0.34,
+  "precision": 0.6772,
+  "recall": 0.9358,
+  "f1": 0.7857,
+  "roc_auc": 0.7791,
+  "pr_auc": 0.8156,
+  "brier_score": 0.1862,
+  "confusion_matrix": [
+    [
+      239,
+      389
+    ],
+    [
+      56,
+      816
+    ]
+  ],
+  "positive_rate": 0.5814
+}
