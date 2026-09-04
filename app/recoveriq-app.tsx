@@ -285,7 +285,33 @@ export default function RecoverIQApp({
       ? data?.cases.find((c) => c.id === id)
       : undefined;
 
-    const backendId = item?.backendId;
+    let backendId = item?.backendId;
+
+// If backendId is missing, find the real backend UUID
+// using the frontend payment ID such as pay_demo_001.
+if (!backendId && id && type !== "seed" && type !== "run") {
+  const casesResponse = await fetch(`${API_BASE}/recovery/cases`);
+
+  if (!casesResponse.ok) {
+    throw new Error("Could not load recovery cases from backend");
+  }
+
+  const casesJson = await casesResponse.json();
+
+  const realCases = Array.isArray(casesJson)
+    ? casesJson
+    : casesJson.cases || [];
+
+  const realCase = realCases.find(
+    (c: any) => c.external_id === id,
+  );
+
+  console.log("Resolved backend case:", realCase);
+
+  if (realCase?.id) {
+    backendId = realCase.id;
+  }
+}
 
     if (type === "seed") {
       const response = await fetch(`${API_BASE}/demo/seed`, {
