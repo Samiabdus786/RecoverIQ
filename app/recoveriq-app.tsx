@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -119,6 +119,57 @@ type State = {
   };
   timeline: { day: string; risk: number; recovered: number }[];
 };
+type BackendCase = {
+  id: string;
+  payment_id?: string;
+  external_id?: string;
+  customer: string;
+  customer_email?: string;
+  amount: number;
+  method: string;
+  failure_reason: string;
+  payment_status?: string;
+  probability: number;
+  expected_value: number;
+  priority: string;
+  recommended_action: string;
+  guardrail_decision: string;
+  state: string;
+  attempts: number;
+  contacts?: number;
+  payment_link_id?: string | null;
+  payment_link_url?: string | null;
+  occurred_at?: string;
+  history?: {
+    successes?: number;
+    failures?: number;
+    recoveries?: number;
+    age_days?: number;
+  };
+};
+type BackendMetrics = {
+  revenue_at_risk: number;
+  revenue_recovered: number;
+  net_recovered_revenue: number;
+  recovery_rate: number;
+  transactions_analyzed: number;
+  successful_recoveries: number;
+  active_cases: number;
+  average_recovery_time_minutes: number;
+  intervention_cost: number;
+  simulation: boolean;
+};
+type BackendAudit = {
+  id?: string;
+  timestamp?: string;
+  created_at?: string;
+  case_id?: string | null;
+  component: string;
+  event_type: string;
+  explanation: string;
+  result: string;
+  error?: string | null;
+};
 type View = "overview" | "queue" | "analytics" | "audit" | "settings";
 
 const NAV: { id: View; label: string; icon: typeof Activity }[] = [
@@ -140,6 +191,152 @@ const shortMoney = (value: number) =>
 const API_BASE =
   import.meta.env.VITE_API_URL ||
   "https://recoveriq-gwz8.onrender.com/api";
+
+const DEFAULT_SETTINGS: RecoverySettings = {
+  autoRecovery: true,
+  approvalThreshold: 25000,
+  maxAttempts: 2,
+  maxContacts: 2,
+  recoveryWindowHours: 168,
+};
+
+function labelize(value: string | undefined) {
+  return (value || "")
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function ageHoursFrom(occurredAt?: string) {
+  if (!occurredAt) return undefined;
+  const occurred = Date.parse(occurredAt);
+  if (Number.isNaN(occurred)) return undefined;
+  return Math.max(0, (Date.now() - occurred) / 36e5);
+}
+
+async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      ...(init?.body ? { "content-type": "application/json" } : {}),
+      ...init?.headers,
+    },
+  });
+  if (!response.ok) {
+    let detail = `Request failed with HTTP ${response.status}`;
+    try {
+      const body = (await response.json()) as { detail?: string; error?: string };
+      detail = body.detail || body.error || detail;
+    } catch {
+      // Keep the compact HTTP status if the backend did not return JSON.
+    }
+    throw new Error(detail);
+  }
+  return response.json() as Promise<T>;
+}
+
+function buildPolicyImpact(cases: Case[], settings: RecoverySettings) {
+  const actionable = cases.filter(
+    (item) =>
+      item.priority !== "SUPPRESSED" &&
+      (item.ageHours ?? 24) <= settings.recoveryWindowHours,
+  );
+  return {
+    automaticCases:
+      settings.autoRecovery && settings.maxAttempts > 0 && settings.maxContacts > 0
+        ? actionable.filter((item) => item.amount < settings.approvalThreshold).length
+        : 0,
+    reviewCases: actionable.filter(
+      (item) =>
+        !settings.autoRecovery ||
+        settings.maxAttempts <= 0 ||
+        settings.maxContacts <= 0 ||
+        item.amount >= settings.approvalThreshold,
+    ).length,
+    suppressedCases: cases.length - actionable.length,
+    expectedValue: actionable.reduce((sum, item) => sum + item.expectedValue, 0),
+  };
+}
+
+async function loadBackendState(previous?: State): Promise<State> {
+  const [health, backendCases, metrics, audit] = await Promise.all([
+    getJson<{ mode: string; payment_provider: string; ai_provider: string }>(
+      `${API_BASE}/health`,
+    ),
+    getJson<BackendCase[]>(`${API_BASE}/recovery/cases`),
+    getJson<BackendMetrics>(`${API_BASE}/dashboard/metrics`),
+    getJson<BackendAudit[]>(`${API_BASE}/audit`),
+  ]);
+  const settings = previous?.settings ?? DEFAULT_SETTINGS;
+  const idByBackend = new Map<string, string>();
+  const cases = backendCases.map((item) => {
+    const displayId = item.external_id || item.payment_id || item.id;
+    idByBackend.set(item.id, displayId);
+    if (item.payment_id) idByBackend.set(item.payment_id, displayId);
+    return {
+      id: displayId,
+      backendId: item.id,
+      customer: item.customer,
+      email: item.customer_email || "",
+      amount: item.amount,
+      method: labelize(item.method),
+      failure: labelize(item.failure_reason),
+      probability: item.probability || 0,
+      expectedValue: item.expected_value || 0,
+      priority: item.priority || "LOW",
+      action: item.recommended_action || "DO_NOTHING",
+      guardrail: item.guardrail_decision || "PENDING",
+      state: item.state,
+      successes: item.history?.successes ?? 0,
+      failures: item.history?.failures ?? 0,
+      providerRef: item.payment_link_id || undefined,
+      paymentLinkUrl: item.payment_link_url || undefined,
+      attempts: item.attempts,
+      ageHours: ageHoursFrom(item.occurred_at),
+      operationStatus: item.payment_link_url
+        ? "Payment link created; waiting for payment outcome."
+        : undefined,
+    };
+  });
+  const recovered = metrics.revenue_recovered || 0;
+  const atRisk = metrics.revenue_at_risk || 0;
+  return {
+    mode: metrics.simulation ? "SIMULATION · SYNTHETIC DATA" : health.mode,
+    aiMode: health.ai_provider,
+    provider: health.payment_provider,
+    duplicateIgnored:
+      previous?.duplicateIgnored ||
+      audit.some((row) => row.event_type === "DUPLICATE_IGNORED"),
+    settings,
+    policyImpact: buildPolicyImpact(cases, settings),
+    cases,
+    audit: audit.map((row) => ({
+      time: new Date(row.timestamp || row.created_at || Date.now()).toLocaleTimeString(
+        "en-IN",
+        { hour12: false },
+      ),
+      caseId: row.case_id ? idByBackend.get(row.case_id) || row.case_id : "SYSTEM",
+      component: row.component,
+      event: row.event_type,
+      detail: row.error ? `${row.explanation} (${row.error})` : row.explanation,
+      result: row.result,
+    })),
+    metrics: {
+      atRisk,
+      recovered,
+      netRecovered: metrics.net_recovered_revenue || 0,
+      recoveryRate: metrics.recovery_rate || 0,
+      analyzed: metrics.transactions_analyzed || 0,
+      successes: metrics.successful_recoveries || 0,
+      active: metrics.active_cases || 0,
+      avgMinutes: metrics.average_recovery_time_minutes || 0,
+    },
+    timeline: [
+      { day: "Before", risk: atRisk + recovered, recovered: 0 },
+      { day: "Now", risk: atRisk, recovered },
+    ],
+  };
+}
 
 function Badge({
   children,
@@ -232,9 +429,14 @@ export default function RecoverIQApp({
   const [selected, setSelected] = useState<Case | null>(null);
   const [working, setWorking] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
   const [showEntry, setShowEntry] = useState(false);
+  const dataRef = useRef<State | null>(null);
   const finishEntry = useCallback(() => setShowEntry(false), []);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
@@ -251,19 +453,32 @@ export default function RecoverIQApp({
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+  const refreshState = useCallback(async () => {
+    const next = await loadBackendState(dataRef.current ?? undefined);
+    setData(next);
+    setSelected((current) =>
+      current
+        ? next.cases.find(
+            (item) =>
+              item.id === current.id ||
+              item.backendId === current.backendId,
+          ) || current
+        : current,
+    );
+    return next;
+  }, []);
   useEffect(() => {
     if (!session) return;
-    const refresh = () =>
-      fetch("/api/demo/state")
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .then(setData)
-        .catch(() =>
-          setError("Live state update paused. Use Seed demo to reconnect."),
-        );
-    refresh();
-    const timer = window.setInterval(refresh, 4000);
+    refreshState().catch(() =>
+      setError("Live backend update paused. Check Render and VITE_API_URL."),
+    );
+    const timer = window.setInterval(() => {
+      refreshState().catch(() =>
+        setError("Live backend update paused. Check Render and VITE_API_URL."),
+      );
+    }, 4000);
     return () => window.clearInterval(timer);
-  }, [session]);
+  }, [refreshState, session]);
   function authenticate(next: AuthSession) {
     localStorage.setItem("recoveriq-session", JSON.stringify(next));
     setShowEntry(true);
@@ -277,8 +492,10 @@ export default function RecoverIQApp({
     setSelected(null);
   }
  async function action(type: string, id?: string) {
-  setWorking(type + (id || ""));
+  const workingKey = `${type}:${id || ""}`;
+  setWorking(workingKey);
   setError("");
+  setNotice("");
 
   try {
     const item = id
@@ -287,51 +504,28 @@ export default function RecoverIQApp({
 
     let backendId = item?.backendId;
 
-// If backendId is missing, find the real backend UUID
-// using the frontend payment ID such as pay_demo_001.
-if (!backendId && id && type !== "seed" && type !== "run") {
-  const casesResponse = await fetch(`${API_BASE}/recovery/cases`);
-
-  if (!casesResponse.ok) {
-    throw new Error("Could not load recovery cases from backend");
-  }
-
-  const casesJson = await casesResponse.json();
-
-  const realCases = Array.isArray(casesJson)
-    ? casesJson
-    : casesJson.cases || [];
-
-  const realCase = realCases.find(
-    (c: any) => c.external_id === id,
-  );
-
-  console.log("Resolved backend case:", realCase);
-
-  if (realCase?.id) {
-    backendId = realCase.id;
-  }
-}
+    if (!backendId && id && type !== "seed" && type !== "run") {
+      const realCases = await getJson<BackendCase[]>(`${API_BASE}/recovery/cases`);
+      const realCase = realCases.find(
+        (candidate) =>
+          candidate.id === id ||
+          candidate.external_id === id ||
+          candidate.payment_id === id,
+      );
+      if (realCase?.id) backendId = realCase.id;
+    }
 
     if (type === "seed") {
-      const response = await fetch(`${API_BASE}/demo/seed`, {
-        method: "POST",
-      });
-
-      if (!response.ok) throw new Error("Seed demo failed");
-
-      window.location.reload();
+      await getJson(`${API_BASE}/demo/seed`, { method: "POST" });
+      await refreshState();
+      setNotice("Demo data reset from backend seed 42.");
       return;
     }
 
     if (type === "run") {
-      const response = await fetch(`${API_BASE}/recovery/run`, {
-        method: "POST",
-      });
-
-      if (!response.ok) throw new Error("Recovery run failed");
-
-      window.location.reload();
+      await getJson(`${API_BASE}/recovery/run`, { method: "POST" });
+      await refreshState();
+      setNotice("Recovery batch completed. Cases, metrics, and audit refreshed.");
       return;
     }
 
@@ -340,111 +534,84 @@ if (!backendId && id && type !== "seed" && type !== "run") {
     }
 
     if (type === "execute") {
-      // Backend may already have created the Razorpay link during Run Recovery.
       if (item?.paymentLinkUrl) {
         window.open(
           item.paymentLinkUrl,
           "_blank",
           "noopener,noreferrer",
         );
+        await refreshState();
+        setNotice("Existing payment link opened. Duplicate creation was avoided.");
         return;
       }
 
-      const response = await fetch(
+      const result = await getJson<BackendCase>(
         `${API_BASE}/recovery/${backendId}/execute`,
-        {
-          method: "POST",
-        },
+        { method: "POST" },
       );
+      const next = await refreshState();
+      const refreshed = next.cases.find((caseItem) => caseItem.backendId === backendId);
+      const paymentLinkUrl = result.payment_link_url || refreshed?.paymentLinkUrl;
 
-      if (!response.ok) {
-        throw new Error("Recovery execution failed");
-      }
-
-      const result = await response.json();
-
-      console.log("REAL EXECUTION:", result);
-
-      if (result.payment_link_url) {
+      if (paymentLinkUrl) {
         window.open(
-          result.payment_link_url,
+          paymentLinkUrl,
           "_blank",
           "noopener,noreferrer",
         );
       }
-
+      setNotice(
+        paymentLinkUrl
+          ? "Payment link created/opened. Revenue stays unchanged until a success outcome."
+          : "Action executed once. Waiting for payment outcome.",
+      );
       return;
     }
 
     if (type === "approve") {
-      const response = await fetch(
-        `${API_BASE}/recovery/${backendId}/approve`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            approved: true,
-            note: "Approved from RecoverIQ dashboard",
-          }),
-        },
-      );
-
-      if (!response.ok) throw new Error("Approval failed");
-
+      await getJson(`${API_BASE}/recovery/${backendId}/approve`, {
+        method: "POST",
+        body: JSON.stringify({
+          approved: true,
+          note: "Approved from RecoverIQ dashboard",
+        }),
+      });
+      await refreshState();
+      setNotice("Action approved and backend state refreshed.");
       return;
     }
 
     if (type === "reject") {
-      const response = await fetch(
-        `${API_BASE}/recovery/${backendId}/reject`,
-        {
-          method: "POST",
-        },
-      );
-
-      if (!response.ok) throw new Error("Rejection failed");
-
+      await getJson(`${API_BASE}/recovery/${backendId}/reject`, { method: "POST" });
+      await refreshState();
+      setNotice("Action rejected. Workflow stopped for that case.");
       return;
     }
 
     if (type === "success") {
-      const response = await fetch(
-        `${API_BASE}/demo/simulate-success/${backendId}`,
-        {
-          method: "POST",
-        },
-      );
-
-      if (!response.ok) throw new Error("Success simulation failed");
-
+      await getJson(`${API_BASE}/demo/simulate-success/${backendId}`, {
+        method: "POST",
+      });
+      await refreshState();
+      setNotice("Simulated success recorded. Revenue metrics refreshed.");
       return;
     }
 
     if (type === "failure") {
-      const response = await fetch(
-        `${API_BASE}/demo/simulate-provider-failure/${backendId}`,
-        {
-          method: "POST",
-        },
-      );
-
-      if (!response.ok) throw new Error("Failure simulation failed");
-
+      await getJson(`${API_BASE}/demo/simulate-provider-failure/${backendId}`, {
+        method: "POST",
+      });
+      await refreshState();
+      setNotice("Provider failure simulation recorded and audited.");
       return;
     }
 
     if (type === "duplicate") {
-      const response = await fetch(
-        `${API_BASE}/demo/simulate-duplicate-webhook/${backendId}`,
-        {
-          method: "POST",
-        },
-      );
-
-      if (!response.ok) throw new Error("Duplicate webhook test failed");
-
+      await getJson(`${API_BASE}/demo/simulate-duplicate-webhook/${backendId}`, {
+        method: "POST",
+      });
+      await refreshState();
+      setNotice("Duplicate webhook simulation completed. No duplicate revenue counted.");
       return;
     }
   } catch (err) {
@@ -604,6 +771,12 @@ if (!backendId && id && type !== "seed" && type !== "run") {
             {error}
           </div>
         )}
+        {notice && (
+          <div className="mx-5 mt-5 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 sm:mx-8">
+            <CheckCircle2 className="h-4 w-4" />
+            {notice}
+          </div>
+        )}
         <div className="p-5 sm:p-8">
           {view === "overview" && (
             <Overview
@@ -633,7 +806,19 @@ if (!backendId && id && type !== "seed" && type !== "run") {
               demoCaseId={data.cases[0]?.id || ""}
               settings={data.settings}
               cases={data.cases}
-              onSnapshot={(next) => setData(next as State)}
+              onSnapshot={(next) => {
+                const snapshot = next as Partial<State>;
+                setData((current) =>
+                  current
+                    ? {
+                        ...current,
+                        settings: snapshot.settings || current.settings,
+                        policyImpact:
+                          snapshot.policyImpact || current.policyImpact,
+                      }
+                    : (snapshot as State),
+                );
+              }}
             />
           )}
         </div>
@@ -643,6 +828,7 @@ if (!backendId && id && type !== "seed" && type !== "run") {
         audit={data.audit}
         onClose={() => setSelected(null)}
         action={action}
+        working={working}
       />
     </div>
   );
@@ -695,7 +881,7 @@ function Overview({
             onClick={() => action("run")}
             disabled={!!working}
           >
-            {working === "run" ? (
+            {working === "run:" ? (
               <RefreshCw className="animate-spin" />
             ) : (
               <Play />
@@ -911,12 +1097,17 @@ function Overview({
             <Button variant="outline" onClick={() => open(awaiting)}>
               Review
             </Button>
-            <Button variant="outline" onClick={() => action("reject", awaiting.id)}>
+            <Button
+              variant="outline"
+              onClick={() => action("reject", awaiting.id)}
+              disabled={!!working}
+            >
               Reject
             </Button>
             <Button
               className="bg-purple-600 hover:bg-purple-700"
               onClick={() => action("approve", awaiting.id)}
+              disabled={!!working}
             >
               Approve action
             </Button>
@@ -1076,7 +1267,7 @@ function Queue({
           disabled={!!working}
         >
           <Play />
-          Run eligible cases
+          {working === "run:" ? "Running..." : "Run eligible cases"}
         </Button>
       </div>
       <div className="space-y-2">
@@ -1466,13 +1657,16 @@ function CaseDialog({
   audit,
   onClose,
   action,
+  working,
 }: {
   item: Case | null;
   audit: Audit[];
   onClose: () => void;
   action: (t: string, id?: string) => void;
+  working: string;
 }) {
   if (!item) return null;
+  const busy = Boolean(working);
   const recommendedActionLabel =
     item.paymentLinkUrl && item.action === "CREATE_PAYMENT_LINK"
       ? "PAYMENT LINK CREATED"
@@ -1541,8 +1735,11 @@ function CaseDialog({
                 <button
                   className="text-xs font-bold text-blue-700 underline-offset-4 hover:underline"
                   onClick={() => action("execute", item.id)}
+                  disabled={busy}
                 >
-                  {item.action.replaceAll("_", " ")}
+                  {working === `execute:${item.id}`
+                    ? "CREATING..."
+                    : item.action.replaceAll("_", " ")}
                 </button>
               ) : (
                 <b className="text-xs text-blue-700">
@@ -1647,6 +1844,7 @@ function CaseDialog({
             {item.paymentLinkUrl && (
               <Button
                 variant="outline"
+                disabled={busy}
                 onClick={() =>
                   window.open(item.paymentLinkUrl, "_blank", "noopener")
                 }
@@ -1661,23 +1859,31 @@ function CaseDialog({
                 <Button
                   className="bg-orange-600 hover:bg-orange-700"
                   onClick={() => action("execute", item.id)}
+                  disabled={busy}
                 >
                   <ExternalLink />
-                  Create payment link
+                  {working === `execute:${item.id}`
+                    ? "Creating..."
+                    : "Create payment link"}
                 </Button>
               )}
             {item.state === "AWAITING_APPROVAL" && (
               <>
-                <Button variant="outline" onClick={() => action("reject", item.id)}>
+                <Button
+                  variant="outline"
+                  onClick={() => action("reject", item.id)}
+                  disabled={busy}
+                >
                   <X />
-                  Reject action
+                  {working === `reject:${item.id}` ? "Rejecting..." : "Reject action"}
                 </Button>
                 <Button
                   className="bg-purple-600 hover:bg-purple-700"
                   onClick={() => action("approve", item.id)}
+                  disabled={busy}
                 >
                   <ShieldCheck />
-                  Approve action
+                  {working === `approve:${item.id}` ? "Approving..." : "Approve action"}
                 </Button>
               </>
             )}
@@ -1685,26 +1891,38 @@ function CaseDialog({
               <Button
                 className="bg-emerald-600 hover:bg-emerald-700"
                 onClick={() => action("success", item.id)}
+                disabled={busy}
               >
                 <CheckCircle2 />
-                Simulate success
+                {working === `success:${item.id}`
+                  ? "Simulating..."
+                  : "Simulate success"}
               </Button>
             )}
-            {!item.paymentLinkUrl && item.state !== "RECOVERED" && (
+            {!item.paymentLinkUrl &&
+              ["DETECTED", "FAILED"].includes(item.state) &&
+              item.priority !== "SUPPRESSED" &&
+              item.action !== "DO_NOTHING" && (
               <Button
                 variant="outline"
                 onClick={() => action("failure", item.id)}
+                disabled={busy}
               >
                 <TriangleAlert />
-                Provider failure
+                {working === `failure:${item.id}`
+                  ? "Testing..."
+                  : "Provider failure"}
               </Button>
             )}
             <Button
               variant="outline"
               onClick={() => action("duplicate", item.id)}
+              disabled={busy}
             >
               <FileCheck2 />
-              Duplicate webhook
+              {working === `duplicate:${item.id}`
+                ? "Testing..."
+                : "Duplicate webhook"}
             </Button>
           </div>
         </div>

@@ -41,6 +41,8 @@ def test_high_value_requires_human_approval(client):
 def test_success_stops_workflow_and_updates_revenue(client):
     client.post("/api/recovery/run")
     case = next(x for x in client.get("/api/recovery/cases").json() if x["state"] == "MONITORING")
+    assert "payment_link_id" in case
+    assert "payment_link_url" in case
     result = client.post(f"/api/demo/simulate-success/{case['id']}").json()
     assert result["case"]["state"] == "RECOVERED"
     metrics = client.get("/api/dashboard/metrics").json()
@@ -64,3 +66,7 @@ def test_duplicate_demo_webhook(client):
     second = client.post(f"/api/demo/simulate-duplicate-webhook/{case['id']}").json()
     assert first["second_ignored"] and second["second_ignored"]
     assert second["duplicate_actions"] == 0
+    metrics = client.get("/api/dashboard/metrics").json()
+    assert metrics["revenue_recovered"] == 0
+    audit = client.get("/api/audit").json()
+    assert any(row["event_type"] == "DUPLICATE_IGNORED" for row in audit)
