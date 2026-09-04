@@ -70,6 +70,7 @@ type Case = {
   action: string;
   guardrail: string;
   state: string;
+  paymentStatus?: string;
   successes: number;
   failures: number;
   providerRef?: string;
@@ -287,6 +288,7 @@ async function loadBackendState(previous?: State): Promise<State> {
       action: item.recommended_action || "DO_NOTHING",
       guardrail: item.guardrail_decision || "PENDING",
       state: item.state,
+      paymentStatus: item.payment_status,
       successes: item.history?.successes ?? 0,
       failures: item.history?.failures ?? 0,
       providerRef: item.payment_link_id || undefined,
@@ -1672,6 +1674,46 @@ function CaseDialog({
       ? "PAYMENT LINK CREATED"
       : item.action.replaceAll("_", " ");
   const caseAudit = audit.filter((row) => row.caseId === item.id).slice(0, 5);
+  const blockedPaymentStatuses = ["PAID", "CANCELLED", "REFUNDED"];
+  const terminalStates = [
+    "RECOVERED",
+    "STOPPED",
+    "REJECTED",
+    "GUARDRAIL_REJECTED",
+    "PAID",
+    "CANCELLED",
+    "REFUNDED",
+  ];
+  const isAwaitingApproval = item.state === "AWAITING_APPROVAL";
+  const isTerminal =
+    terminalStates.includes(item.state) ||
+    blockedPaymentStatuses.includes(item.paymentStatus || "");
+  const canExecutePaymentLink =
+    item.action === "CREATE_PAYMENT_LINK" &&
+    ["DETECTED", "FAILED"].includes(item.state) &&
+    item.guardrail !== "HUMAN_REVIEW" &&
+    item.guardrail !== "REJECTED" &&
+    !isAwaitingApproval &&
+    !isTerminal &&
+    !item.paymentLinkUrl;
+  const canOpenPaymentLink =
+    Boolean(item.paymentLinkUrl) &&
+    ["MONITORING", "RECOVERED"].includes(item.state) &&
+    !blockedPaymentStatuses.includes(item.paymentStatus || "");
+  const canApproveOrReject = isAwaitingApproval;
+  const canSimulateSuccess = item.state === "MONITORING" && !isTerminal;
+  const canSimulateProviderFailure =
+    !item.paymentLinkUrl &&
+    ["DETECTED", "FAILED"].includes(item.state) &&
+    item.priority !== "SUPPRESSED" &&
+    item.action !== "DO_NOTHING" &&
+    item.guardrail !== "HUMAN_REVIEW" &&
+    item.guardrail !== "REJECTED" &&
+    !isAwaitingApproval &&
+    !isTerminal;
+  const canShowDuplicateWebhook = ["MONITORING", "RECOVERED"].includes(
+    item.state,
+  );
   return (
     <Dialog open={!!item} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto p-0 sm:max-w-3xl">
@@ -1730,8 +1772,7 @@ function CaseDialog({
             </p>
             <div className="mt-4 flex items-center justify-between rounded-lg bg-white p-3">
               <span className="text-xs text-slate-500">Recommended action</span>
-              {item.action === "CREATE_PAYMENT_LINK" &&
-              ["DETECTED", "FAILED"].includes(item.state) ? (
+              {canExecutePaymentLink ? (
                 <button
                   className="text-xs font-bold text-blue-700 underline-offset-4 hover:underline"
                   onClick={() => action("execute", item.id)}
@@ -1841,7 +1882,7 @@ function CaseDialog({
             </div>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
-            {item.paymentLinkUrl && (
+            {canOpenPaymentLink && (
               <Button
                 variant="outline"
                 disabled={busy}
@@ -1853,21 +1894,19 @@ function CaseDialog({
                 Open payment link
               </Button>
             )}
-            {item.action === "CREATE_PAYMENT_LINK" &&
-              ["DETECTED", "FAILED"].includes(item.state) &&
-              !item.paymentLinkUrl && (
-                <Button
-                  className="bg-orange-600 hover:bg-orange-700"
-                  onClick={() => action("execute", item.id)}
-                  disabled={busy}
-                >
-                  <ExternalLink />
-                  {working === `execute:${item.id}`
-                    ? "Creating..."
-                    : "Create payment link"}
-                </Button>
-              )}
-            {item.state === "AWAITING_APPROVAL" && (
+            {canExecutePaymentLink && (
+              <Button
+                className="bg-orange-600 hover:bg-orange-700"
+                onClick={() => action("execute", item.id)}
+                disabled={busy}
+              >
+                <ExternalLink />
+                {working === `execute:${item.id}`
+                  ? "Creating..."
+                  : "Create payment link"}
+              </Button>
+            )}
+            {canApproveOrReject && (
               <>
                 <Button
                   variant="outline"
@@ -1887,7 +1926,7 @@ function CaseDialog({
                 </Button>
               </>
             )}
-            {item.state === "MONITORING" && (
+            {canSimulateSuccess && (
               <Button
                 className="bg-emerald-600 hover:bg-emerald-700"
                 onClick={() => action("success", item.id)}
@@ -1899,10 +1938,7 @@ function CaseDialog({
                   : "Simulate success"}
               </Button>
             )}
-            {!item.paymentLinkUrl &&
-              ["DETECTED", "FAILED"].includes(item.state) &&
-              item.priority !== "SUPPRESSED" &&
-              item.action !== "DO_NOTHING" && (
+            {canSimulateProviderFailure && (
               <Button
                 variant="outline"
                 onClick={() => action("failure", item.id)}
@@ -1914,16 +1950,18 @@ function CaseDialog({
                   : "Provider failure"}
               </Button>
             )}
-            <Button
-              variant="outline"
-              onClick={() => action("duplicate", item.id)}
-              disabled={busy}
-            >
-              <FileCheck2 />
-              {working === `duplicate:${item.id}`
-                ? "Testing..."
-                : "Duplicate webhook"}
-            </Button>
+            {canShowDuplicateWebhook && (
+              <Button
+                variant="outline"
+                onClick={() => action("duplicate", item.id)}
+                disabled={busy}
+              >
+                <FileCheck2 />
+                {working === `duplicate:${item.id}`
+                  ? "Testing..."
+                  : "Duplicate webhook"}
+              </Button>
+            )}
           </div>
         </div>
       </DialogContent>
