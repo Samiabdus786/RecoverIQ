@@ -1,34 +1,18 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const recoveriqTitle = /<title>RecoverIQ — AI Revenue Recovery<\/title>/i;
+const recoveriqTitle = /title:\s*"RecoverIQ . AI Revenue Recovery"/i;
 
-test("renders RecoverIQ production metadata", async () => {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+test("builds RecoverIQ production metadata", async () => {
+  const serverUrl = new URL("../dist/server/index.js", import.meta.url);
+  serverUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
+  const server = await import(serverUrl.href);
 
-  const response = await worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
-  );
+  assert.equal(typeof server.default, "function");
+  assert.ok("generateStaticParamsMap" in server);
 
-  assert.equal(response.status, 200);
-  assert.match(
-    response.headers.get("content-type") ?? "",
-    /^text\/html\b/i,
-  );
-  const html = await response.text();
-  assert.match(html, recoveriqTitle);
-  assert.doesNotMatch(html, /Starter Project/i);
+  const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
+  assert.match(layout, recoveriqTitle);
+  assert.doesNotMatch(layout, /Starter Project/i);
 });

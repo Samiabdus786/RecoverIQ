@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -79,6 +79,41 @@ export default function AuthScreen({
   const googleClient = useRef<GoogleTokenClient | null>(null);
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
+  const finish = useCallback((session: AuthSession) => {
+    playCoinRainSound(0.42);
+    setSubmitting(true);
+    window.setTimeout(() => onAuthenticated(session), 420);
+  }, [onAuthenticated]);
+
+  const verifyGoogleToken = useCallback(async (response: GoogleTokenResponse) => {
+    if (!response.access_token || response.error) {
+      setSubmitting(false);
+      setError("Google sign-in was cancelled or denied.");
+      return;
+    }
+    try {
+      const verified = await fetch("/api/auth/google", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessToken: response.access_token }),
+      });
+      const session = (await verified.json()) as AuthSession | { error?: string };
+      if (!verified.ok || !isAuthSession(session)) {
+        throw new Error(
+          "error" in session ? session.error : "Google verification failed",
+        );
+      }
+      finish(session);
+    } catch (caught) {
+      setSubmitting(false);
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Google sign-in could not be verified.",
+      );
+    }
+  }, [finish]);
+
   useEffect(() => {
     if (!googleClientId) return;
     const configure = () => {
@@ -106,42 +141,7 @@ export default function AuthScreen({
     script.onerror = () =>
       setError("Google sign-in could not be loaded. Check your connection.");
     document.head.appendChild(script);
-  }, [googleClientId]);
-
-  function finish(session: AuthSession) {
-    playCoinRainSound(0.42);
-    setSubmitting(true);
-    window.setTimeout(() => onAuthenticated(session), 420);
-  }
-
-  async function verifyGoogleToken(response: GoogleTokenResponse) {
-    if (!response.access_token || response.error) {
-      setSubmitting(false);
-      setError("Google sign-in was cancelled or denied.");
-      return;
-    }
-    try {
-      const verified = await fetch("/api/auth/google", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ accessToken: response.access_token }),
-      });
-      const session = (await verified.json()) as AuthSession | { error?: string };
-      if (!verified.ok || !isAuthSession(session)) {
-        throw new Error(
-          "error" in session ? session.error : "Google verification failed",
-        );
-      }
-      finish(session);
-    } catch (caught) {
-      setSubmitting(false);
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Google sign-in could not be verified.",
-      );
-    }
-  }
+  }, [googleClientId, verifyGoogleToken]);
 
   function signInWithGoogle() {
     setError("");
