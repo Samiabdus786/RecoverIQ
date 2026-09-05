@@ -50,6 +50,32 @@ def test_run_batch_scores_and_explains(client):
     assert detail["audit"]
 
 
+def test_demo_has_multiple_direct_payment_link_cases(client):
+    client.post("/api/recovery/run")
+    cases = client.get("/api/recovery/cases").json()
+    direct = [
+        case
+        for case in cases
+        if case["amount"] < 25000
+        and case["recommended_action"] == "CREATE_PAYMENT_LINK"
+        and case["guardrail_decision"] == "APPROVED"
+        and case["state"] == "MONITORING"
+        and case["payment_link_id"]
+        and case["payment_link_url"]
+    ]
+    assert len(direct) >= 3
+    assert "Neel Joshi" in {case["customer"] for case in direct}
+
+    review = [
+        case
+        for case in cases
+        if case["guardrail_decision"] == "HUMAN_REVIEW"
+        and case["state"] == "AWAITING_APPROVAL"
+    ]
+    assert len(review) >= 2
+    assert {"Mira Shah", "Priya Nair"}.issubset({case["customer"] for case in review})
+
+
 def test_high_value_requires_human_approval(client):
     client.post("/api/recovery/run")
     case = next(x for x in client.get("/api/recovery/cases").json() if x["amount"] >= 25000)
@@ -63,6 +89,9 @@ def test_success_stops_workflow_and_updates_revenue(client):
     case = next(x for x in client.get("/api/recovery/cases").json() if x["state"] == "MONITORING")
     assert "payment_link_id" in case
     assert "payment_link_url" in case
+    repeat = client.post(f"/api/recovery/{case['id']}/execute").json()
+    assert repeat["state"] == "MONITORING"
+    assert repeat["payment_link_id"] == case["payment_link_id"]
     result = client.post(f"/api/demo/simulate-success/{case['id']}").json()
     assert result["case"]["state"] == "RECOVERED"
     metrics = client.get("/api/dashboard/metrics").json()

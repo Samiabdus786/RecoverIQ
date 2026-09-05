@@ -97,6 +97,12 @@ class RecoveryWorkflowService:
         if case.state == "AWAITING_APPROVAL" and not approved:
             return case
         action = RecoveryActionType(case.recommended_action)
+        if (
+            action == RecoveryActionType.CREATE_PAYMENT_LINK
+            and case.state == "MONITORING"
+            and case.payment_link_id
+        ):
+            return case
         guard = self.guardrails.evaluate(case, case.payment, action)
         if guard.decision == "HUMAN_REVIEW" and not approved:
             return case
