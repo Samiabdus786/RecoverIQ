@@ -26,7 +26,7 @@ flowchart LR
     A[Merchant or Razorpay event] --> B[Revenue-at-risk detection]
     B --> C[XGBoost recovery probability]
     C --> D[Gemini or deterministic diagnosis]
-    D --> E[LangGraph bounded workflow]
+    D --> E[Bounded recovery decision workflow]
     E --> F[Deterministic guardrails]
     F --> G[Razorpay Test Mode or explicit Mock Provider]
     G --> H[Webhook and outcome monitoring]
