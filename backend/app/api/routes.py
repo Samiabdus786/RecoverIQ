@@ -19,7 +19,7 @@ from app.models.entities import (
 from app.payments.providers import verify_webhook_signature
 from app.schemas.domain import ApprovalRequest
 from app.services.audit import audit, transition
-from app.services.seed import reset_and_seed
+from app.services.seed import reset_and_seed, reset_demo_records
 
 
 router = APIRouter(prefix="/api")
@@ -84,6 +84,11 @@ def health(request: Request):
 @router.post("/demo/seed")
 def seed(db: Session = Depends(get_db)):
     return reset_and_seed(db, get_settings().demo_seed)
+
+
+@router.post("/demo/reset")
+def reset_demo(db: Session = Depends(get_db)):
+    return reset_demo_records(db)
 
 
 @router.get("/dashboard/metrics")

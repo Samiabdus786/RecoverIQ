@@ -12,6 +12,26 @@ def test_seed_is_reproducible(client):
     assert sum(x["amount"] for x in first) == sum(x["amount"] for x in second)
 
 
+def test_demo_reset_clears_only_demo_state_and_allows_fresh_seed(client):
+    client.post("/api/recovery/run")
+    first_cases = client.get("/api/recovery/cases").json()
+    original_ids = {case["id"] for case in first_cases}
+    monitoring = next(case for case in first_cases if case["state"] == "MONITORING")
+    client.post(f"/api/demo/simulate-success/{monitoring['id']}")
+    assert client.get("/api/dashboard/metrics").json()["revenue_recovered"] == monitoring["amount"]
+
+    reset = client.post("/api/demo/reset").json()
+    assert reset["scope"] == "known_demo_records_only"
+    assert reset["cases"] == 10
+    assert client.get("/api/transactions").json() == []
+    assert client.get("/api/dashboard/metrics").json()["revenue_recovered"] == 0
+
+    client.post("/api/demo/seed")
+    fresh_ids = {case["id"] for case in client.get("/api/recovery/cases").json()}
+    assert len(fresh_ids) == 10
+    assert fresh_ids.isdisjoint(original_ids)
+
+
 def test_dashboard_numbers_come_from_database(client):
     tx = client.get("/api/transactions").json()
     metrics = client.get("/api/dashboard/metrics").json()

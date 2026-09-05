@@ -524,6 +524,18 @@ export default function RecoverIQApp({
       return;
     }
 
+    if (type === "reset") {
+      const confirmed = window.confirm(
+        "Reset only the known RecoverIQ demo records? Existing external Razorpay Test links will not be changed.",
+      );
+      if (!confirmed) return;
+      await getJson(`${API_BASE}/demo/reset`, { method: "POST" });
+      await refreshState();
+      setSelected(null);
+      setNotice("Demo records cleared safely. Seed demo to create fresh cases.");
+      return;
+    }
+
     if (type === "run") {
       await getJson(`${API_BASE}/recovery/run`, { method: "POST" });
       await refreshState();
@@ -870,6 +882,14 @@ function Overview({
           </p>
         </div>
         <div className="demo-actions">
+          <Button
+            variant="outline"
+            onClick={() => action("reset")}
+            disabled={!!working}
+          >
+            <RefreshCw />
+            Reset demo
+          </Button>
           <Button
             variant="outline"
             onClick={() => action("seed")}
