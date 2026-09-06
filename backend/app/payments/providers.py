@@ -1,10 +1,13 @@
 from __future__ import annotations
 import hashlib
 import hmac
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import uuid4
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,6 +46,38 @@ class RazorpayProvider:
         self.auth = (key_id, key_secret)
         self.base_url = "https://api.razorpay.com/v1"
 
+    @staticmethod
+    def _error_details(exc: httpx.HTTPError) -> dict:
+        response = getattr(exc, "response", None)
+        details: dict = {"type": type(exc).__name__}
+        if response is None:
+            details["description"] = str(exc)
+            return details
+
+        details["status_code"] = response.status_code
+        try:
+            body = response.json()
+        except ValueError:
+            details["description"] = response.text[:300]
+            return details
+
+        error = body.get("error", body) if isinstance(body, dict) else {}
+        if isinstance(error, dict):
+            for key in ("code", "description", "field", "source", "reason", "step"):
+                value = error.get(key)
+                if value:
+                    details[key] = value
+            metadata = error.get("metadata")
+            if isinstance(metadata, dict):
+                details["metadata"] = {
+                    key: value
+                    for key, value in metadata.items()
+                    if key in {"payment_id", "order_id", "payment_link_id"}
+                }
+        else:
+            details["description"] = str(error)[:300]
+        return details
+
     def create_payment_link(self, *, amount: float, currency: str, reference_id: str, customer: dict) -> ProviderResult:
         payload = {
             "amount": int(round(amount * 100)),
@@ -61,7 +96,14 @@ class RazorpayProvider:
             data = response.json()
             return ProviderResult(True, data["id"], data["short_url"], raw={"status": data.get("status")})
         except httpx.HTTPError as exc:
-            return ProviderResult(False, error=f"Razorpay request failed: {type(exc).__name__}")
+            details = self._error_details(exc)
+            logger.warning("Razorpay payment link creation failed", extra={"razorpay_error": details})
+            summary = "; ".join(f"{key}={value}" for key, value in details.items() if key != "metadata")
+            return ProviderResult(
+                False,
+                error=f"Razorpay request failed: {summary}",
+                raw={"provider_error": details},
+            )
 
 
 def verify_webhook_signature(body: bytes, signature: str, secret: str) -> bool:

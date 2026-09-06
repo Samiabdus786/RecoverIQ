@@ -107,6 +107,19 @@ class RecoveryWorkflowService:
         if guard.decision == "HUMAN_REVIEW" and not approved:
             return case
         if guard.decision == "REJECTED":
+            if case.state == "FAILED":
+                audit(
+                    db,
+                    merchant_id=case.merchant_id,
+                    case_id=case.id,
+                    component="GUARDRAIL",
+                    event_type="GUARDRAIL_DECISION",
+                    state_before=case.state,
+                    state_after=case.state,
+                    explanation=", ".join(guard.reason_codes),
+                    result="REJECTED",
+                )
+                db.commit(); return case
             transition(db, case, "GUARDRAIL_REJECTED", ", ".join(guard.reason_codes), "GUARDRAIL")
             db.commit(); return case
         key = f"{case.id}:{action.value}:{case.recovery_attempts + 1}"

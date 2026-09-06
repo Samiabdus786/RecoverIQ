@@ -109,6 +109,37 @@ def test_provider_failure_safe_and_audited(client):
         assert any(row["event_type"] == "PROVIDER_FAILURE" for row in audit)
 
 
+def test_provider_failure_retry_limit_preserves_failed_state(client):
+    client.app.state.provider.fail_next = True
+    client.post("/api/recovery/run")
+    failed = next(
+        case
+        for case in client.get("/api/recovery/cases").json()
+        if case["state"] == "FAILED"
+        and case["recommended_action"] == "CREATE_PAYMENT_LINK"
+        and case["guardrail_decision"] == "APPROVED"
+    )
+
+    client.app.state.provider.fail_next = True
+    retry_failed = client.post(f"/api/recovery/{failed['id']}/execute").json()
+    assert retry_failed["state"] == "FAILED"
+    assert retry_failed["guardrail_decision"] == "APPROVED"
+
+    blocked_retry = client.post(f"/api/recovery/{failed['id']}/execute").json()
+    assert blocked_retry["state"] == "FAILED"
+    assert blocked_retry["guardrail_decision"] == "APPROVED"
+
+    audit = client.get("/api/audit").json()
+    case_events = [row for row in audit if row["case_id"] == failed["id"]]
+    assert any(row["event_type"] == "PROVIDER_FAILURE" for row in case_events)
+    assert any(
+        row["component"] == "GUARDRAIL"
+        and row["event_type"] == "GUARDRAIL_DECISION"
+        and row["result"] == "REJECTED"
+        for row in case_events
+    )
+
+
 def test_duplicate_demo_webhook(client):
     case = client.get("/api/recovery/cases").json()[0]
     first = client.post(f"/api/demo/simulate-duplicate-webhook/{case['id']}").json()

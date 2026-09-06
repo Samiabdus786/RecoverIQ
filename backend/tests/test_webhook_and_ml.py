@@ -1,7 +1,9 @@
 import hashlib
 import hmac
 import json
+import httpx
 from app.core.config import get_settings
+from app.payments.providers import RazorpayProvider
 from ml.training.generate import generate_dataset
 
 
@@ -27,6 +29,41 @@ def test_valid_and_duplicate_webhook(client):
     second = client.post("/api/webhooks/razorpay", content=body, headers=headers)
     assert first.json()["status"] == "processed"
     assert second.json()["status"] == "duplicate_ignored"
+
+
+def test_razorpay_http_error_is_sanitized_and_useful(monkeypatch):
+    def fail_post(url, **kwargs):
+        request = httpx.Request("POST", url)
+        response = httpx.Response(
+            400,
+            json={
+                "error": {
+                    "code": "BAD_REQUEST_ERROR",
+                    "description": "The contact field is invalid.",
+                    "field": "customer.contact",
+                    "source": "business",
+                    "reason": "input_validation_failed",
+                    "step": "payment_link_creation",
+                },
+            },
+            request=request,
+        )
+        raise httpx.HTTPStatusError("bad request", request=request, response=response)
+
+    monkeypatch.setattr("app.payments.providers.httpx.post", fail_post)
+    result = RazorpayProvider("rzp_test_example", "secret_example").create_payment_link(
+        amount=5000,
+        currency="INR",
+        reference_id="case_123",
+        customer={"name": "Demo", "email": "demo@example.com", "contact": "bad"},
+    )
+
+    assert not result.success
+    assert "status_code=400" in result.error
+    assert "code=BAD_REQUEST_ERROR" in result.error
+    assert "description=The contact field is invalid." in result.error
+    assert "secret_example" not in result.error
+    assert result.raw["provider_error"]["field"] == "customer.contact"
 
 
 def test_razorpay_payment_link_webhook_recovers_once_and_stops(client):
